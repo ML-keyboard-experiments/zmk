@@ -268,20 +268,20 @@ static int kscan_matrix_read(const struct device *dev) {
 #endif
     }
 
-    if (config->extra_gpios.len > 0) {
-        data->extra_gpio_scan_counter++;
-        if (data->extra_gpio_scan_counter >= 10000) {
-            data->extra_gpio_scan_counter = 0;
-            data->extra_gpio_state = !data->extra_gpio_state;
-            LOG_DBG("Extra GPIO toggled to state %d", data->extra_gpio_state);
-            for (int k = 0; k < config->extra_gpios.len; k++) {
-                int extra_err = gpio_pin_set_dt(&config->extra_gpios.gpios[k].spec, data->extra_gpio_state);
-                if (extra_err) {
-                    LOG_ERR("Failed to set extra GPIO %d to %d: %i", k, data->extra_gpio_state, extra_err);
-                }
-            }
-        }
-    }
+    // if (config->extra_gpios.len > 0) {
+    //     data->extra_gpio_scan_counter++;
+    //     if (data->extra_gpio_scan_counter >= 10000) {
+    //         data->extra_gpio_scan_counter = 0;
+    //         data->extra_gpio_state = !data->extra_gpio_state;
+    //         LOG_DBG("Extra GPIO toggled to state %d", data->extra_gpio_state);
+    //         for (int k = 0; k < config->extra_gpios.len; k++) {
+    //             int extra_err = gpio_pin_set_dt(&config->extra_gpios.gpios[k].spec, data->extra_gpio_state);
+    //             if (extra_err) {
+    //                 LOG_ERR("Failed to set extra GPIO %d to %d: %i", k, data->extra_gpio_state, extra_err);
+    //             }
+    //         }
+    //     }
+    // }
 
     // Process the new state.
     bool continue_scan = false;
@@ -293,6 +293,13 @@ static int kscan_matrix_read(const struct device *dev) {
 
             if (zmk_debounce_get_changed(state)) {
                 const bool pressed = zmk_debounce_is_pressed(state);
+
+                for (int k = 0; k < config->extra_gpios.len; k++) {
+                    int extra_err = gpio_pin_set_dt(&config->extra_gpios.gpios[k].spec, pressed ? 1 : 0);
+                    if (extra_err) {
+                        LOG_ERR("Failed to set extra GPIO %d to %d: %i", k, data->extra_gpio_state, extra_err);
+                    }
+                }
 
                 LOG_DBG("Sending event at %i,%i state %s", r, c, pressed ? "on" : "off");
                 data->callback(dev, r, c, pressed);
