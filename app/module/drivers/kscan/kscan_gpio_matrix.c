@@ -56,6 +56,10 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
     KSCAN_GPIO_GET_BY_IDX(DT_DRV_INST(inst_idx), row_gpios, idx)
 #define KSCAN_GPIO_COL_CFG_INIT(idx, inst_idx)                                                     \
     KSCAN_GPIO_GET_BY_IDX(DT_DRV_INST(inst_idx), col_gpios, idx)
+#define KSCAN_GPIO_EXTRA_GPIO_CFG_INIT(idx, inst_idx)                                              \
+    KSCAN_GPIO_GET_BY_IDX(DT_DRV_INST(inst_idx), extra_gpios, idx)
+#define INST_HAS_EXTRA_GPIOS(n) DT_INST_NODE_HAS_PROP(n, extra_gpios)
+#define INST_EXTRA_GPIOS_LEN(n) COND_CODE_1(INST_HAS_EXTRA_GPIOS(n), (DT_INST_PROP_LEN(n, extra_gpios)), (0))
 
 enum kscan_diode_direction {
     KSCAN_ROW2COL,
@@ -83,10 +87,15 @@ struct kscan_matrix_data {
      * (config->rows * config->cols)
      */
     struct zmk_debounce_state *matrix_state;
+    /** Counter for toggling extra GPIOs every 10,000 scans. */
+    uint32_t extra_gpio_scan_counter;
+    /** Current state of extra GPIOs (0 or 1). */
+    int extra_gpio_state;
 };
 
 struct kscan_matrix_config {
     struct kscan_gpio_list outputs;
+    struct kscan_gpio_list extra_gpios;
     struct zmk_debounce_config debounce_config;
     size_t rows;
     size_t cols;
@@ -259,6 +268,21 @@ static int kscan_matrix_read(const struct device *dev) {
 #endif
     }
 
+    if (config->extra_gpios.len > 0) {
+        data->extra_gpio_scan_counter++;
+        if (data->extra_gpio_scan_counter >= 10000) {
+            data->extra_gpio_scan_counter = 0;
+            data->extra_gpio_state = !data->extra_gpio_state;
+            LOG_DBG("Extra GPIO toggled to state %d", data->extra_gpio_state);
+            for (int k = 0; k < config->extra_gpios.len; k++) {
+                int extra_err = gpio_pin_set_dt(&config->extra_gpios.gpios[k].spec, data->extra_gpio_state);
+                if (extra_err) {
+                    LOG_ERR("Failed to set extra GPIO %d to %d: %i", k, data->extra_gpio_state, extra_err);
+                }
+            }
+        }
+    }
+
     // Process the new state.
     bool continue_scan = false;
 
@@ -402,6 +426,13 @@ static int kscan_matrix_init_outputs(const struct device *dev) {
         }
     }
 
+    for (int i = 0; i < config->extra_gpios.len; i++) {
+        const struct gpio_dt_spec *gpio = &config->extra_gpios.gpios[i].spec;
+        int err = kscan_matrix_init_output_inst(dev, gpio);
+        if (err) {
+            return err;
+        }
+    }
     return 0;
 }
 
@@ -504,6 +535,11 @@ static const struct kscan_driver_api kscan_matrix_api = {
     static struct kscan_gpio kscan_matrix_cols_##n[] = {                                           \
         LISTIFY(INST_COLS_LEN(n), KSCAN_GPIO_COL_CFG_INIT, (, ), n)};                              \
                                                                                                    \
+    COND_CODE_1(INST_HAS_EXTRA_GPIOS(n),                                                           \
+        (static struct kscan_gpio kscan_matrix_extra_gpios_##n[] = {                               \
+            LISTIFY(INST_EXTRA_GPIOS_LEN(n), KSCAN_GPIO_EXTRA_GPIO_CFG_INIT, (, ), n)};),          \
+        ())                                                                                        \
+                                                                                                   \
     static struct zmk_debounce_state kscan_matrix_state_##n[INST_MATRIX_LEN(n)];                   \
                                                                                                    \
     COND_INTERRUPTS(                                                                               \
@@ -520,6 +556,9 @@ static const struct kscan_driver_api kscan_matrix_api = {
         .cols = ARRAY_SIZE(kscan_matrix_cols_##n),                                                 \
         .outputs =                                                                                 \
             KSCAN_GPIO_LIST(COND_DIODE_DIR(n, (kscan_matrix_rows_##n), (kscan_matrix_cols_##n))),  \
+        .extra_gpios = COND_CODE_1(INST_HAS_EXTRA_GPIOS(n),                                       \
+            (KSCAN_GPIO_LIST(kscan_matrix_extra_gpios_##n)),                                       \
+            ((struct kscan_gpio_list){})),                                                         \
         .debounce_config =                                                                         \
             {                                                                                      \
                 .debounce_press_ms = INST_DEBOUNCE_PRESS_MS(n),                                    \

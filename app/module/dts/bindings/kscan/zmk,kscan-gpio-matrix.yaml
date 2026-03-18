@@ -41,3 +41,9 @@ properties:
     enum:
       - row2col
       - col2row
+  extra-gpios:
+    type: phandle-array
+    required: false
+    description: >
+      Optional single GPIO. During each matrix scan it is driven high when a
+      key press is detected and driven low at the end of the scan function.
